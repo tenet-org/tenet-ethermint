@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"strings"
 	"time"
 
 	"github.com/ethereum/go-ethereum/eth/tracers"
@@ -242,6 +243,7 @@ func (k Keeper) EthCall(c context.Context, req *types.EthCallRequest) (*types.Ms
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 	cfg, err := k.EVMConfig(ctx, GetProposerAddress(ctx, req.ProposerAddress), chainID)
+	cfg, err = k.handleEVMConfigError(ctx, cfg, err, chainID)
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
@@ -264,6 +266,23 @@ func (k Keeper) EthCall(c context.Context, req *types.EthCallRequest) (*types.Ms
 	}
 
 	return res, nil
+}
+
+// Fix for the error handling in the EVMConfig function
+func (k Keeper) handleEVMConfigError(ctx sdk.Context, cfg *statedb.EVMConfig, err error, chainID *big.Int) (*statedb.EVMConfig, error) {
+	if err != nil && strings.Contains(err.Error(), "failed to obtain coinbase address") {
+		params := k.GetParams(ctx)
+		ethCfg := params.ChainConfig.EthereumConfig(chainID)
+
+		return &statedb.EVMConfig{
+			Params:      params,
+			ChainConfig: ethCfg,
+			CoinBase:    common.Address{},
+			BaseFee:     k.GetBaseFee(ctx, ethCfg),
+		}, nil
+	}
+
+	return cfg, err
 }
 
 // EstimateGas implements eth_estimateGas rpc api.
@@ -316,6 +335,7 @@ func (k Keeper) EstimateGas(c context.Context, req *types.EthCallRequest) (*type
 	}
 	gasCap = hi
 	cfg, err := k.EVMConfig(ctx, GetProposerAddress(ctx, req.ProposerAddress), chainID)
+	cfg, err = k.handleEVMConfigError(ctx, cfg, err, chainID)
 	if err != nil {
 		return nil, status.Error(codes.Internal, "failed to load evm config")
 	}
@@ -418,6 +438,7 @@ func (k Keeper) TraceTx(c context.Context, req *types.QueryTraceTxRequest) (*typ
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 	cfg, err := k.EVMConfig(ctx, GetProposerAddress(ctx, req.ProposerAddress), chainID)
+	cfg, err = k.handleEVMConfigError(ctx, cfg, err, chainID)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to load evm config: %s", err.Error())
 	}
@@ -496,6 +517,7 @@ func (k Keeper) TraceBlock(c context.Context, req *types.QueryTraceBlockRequest)
 	}
 
 	cfg, err := k.EVMConfig(ctx, GetProposerAddress(ctx, req.ProposerAddress), chainID)
+	cfg, err = k.handleEVMConfigError(ctx, cfg, err, chainID)
 	if err != nil {
 		return nil, status.Error(codes.Internal, "failed to load evm config")
 	}
